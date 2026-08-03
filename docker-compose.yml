@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+
+  mysql:
+    image: mysql:8.0
+    container_name: hrportal-mysql
+    restart: always
+
+    environment:
+      MYSQL_ROOT_PASSWORD: Abhi@2001
+      MYSQL_DATABASE: hr_portal
+
+    ports:
+      - "3307:3306"
+
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  backend:
+    build: ./backend/hrportal
+
+    container_name: hrportal-backend
+
+    restart: always
+
+    depends_on:
+      - mysql
+
+    ports:
+      - "8080:8080"
+
+volumes:
+  mysql-data:
