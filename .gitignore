@@ -1,0 +1,38 @@
+# ===========================
+# Java / Spring Boot
+# ===========================
+backend/target/
+*.class
+*.jar
+*.war
+*.log
+
+# ===========================
+# React / Node
+# ===========================
+frontend/node_modules/
+frontend/dist/
+
+# ===========================
+# IDE Files
+# ===========================
+.vscode/
+.idea/
+*.iml
+
+# ===========================
+# Operating System Files
+# ===========================
+.DS_Store
+Thumbs.db
+
+# ===========================
+# Environment Files
+# ===========================
+frontend/.env.local
+backend/.env
+
+# ===========================
+# Maven Wrapper Logs
+# ===========================
+.mvn/wrapper/maven-wrapper.jar
