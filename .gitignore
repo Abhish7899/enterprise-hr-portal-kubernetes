@@ -31,7 +31,7 @@ Thumbs.db
 # ===========================
 frontend/.env.local
 backend/.env
-
+.env
 # ===========================
 # Maven Wrapper Logs
 # ===========================

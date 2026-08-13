@@ -1,20 +1,31 @@
 services:
 
-  mysql:
-    image: mysql:8.0
-    container_name: hrportal-mysql
+  postgres:
+    image: postgres:16
+    container_name: hrportal-postgres
 
     restart: always
 
     environment:
-      MYSQL_ROOT_PASSWORD: Abhi@2001
-      MYSQL_DATABASE: hr_portal
+      POSTGRES_DB: ${DB_NAME:-hr_portal}
+      POSTGRES_USER: ${DB_USERNAME:-hradmin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-hrpassword}
 
     ports:
-      - "3307:3306"
+      - "5432:5432"
 
     volumes:
-      - mysql-data:/var/lib/mysql
+      - postgres-data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USERNAME:-hradmin} -d ${DB_NAME:-hr_portal}"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
     build: ./backend/hrportal
@@ -23,8 +34,16 @@ services:
 
     restart: always
 
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-hr_portal}
+      DB_USERNAME: ${DB_USERNAME:-hradmin}
+      DB_PASSWORD: ${DB_PASSWORD:-hrpassword}
+
     depends_on:
-      - mysql
+      postgres:
+        condition: service_healthy
 
     ports:
       - "8080:8080"
@@ -43,4 +62,5 @@ services:
       - "3000:80"
 
 volumes:
-  mysql-data:
+  postgres-data:
+    name: hr-postgres-data
