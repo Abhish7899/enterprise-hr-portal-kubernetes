@@ -1,23 +1,38 @@
-# Use Java 17 Runtime
-FROM eclipse-temurin:17-jdk
+# Stage 1: Build the Spring Boot application
+FROM eclipse-temurin:17-jdk AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Copy project files
-COPY . .
+# Copy Maven wrapper and dependency files first
+COPY mvnw .
+COPY .mvn .mvn
+COPY pom.xml .
 
-# Give execute permission to Maven Wrapper
 RUN chmod +x mvnw
 
-# Build the Spring Boot application
+# Download dependencies
+RUN ./mvnw dependency:go-offline -DskipTests
+
+# Copy source code
+COPY src src
+
+# Build the application
 RUN ./mvnw clean package -DskipTests
 
-# Copy generated JAR
-RUN cp target/*.jar app.jar
+# Stage 2: Run the application
+FROM eclipse-temurin:17-jre
 
-# Expose application port
+WORKDIR /app
+
+# Create a non-root user
+RUN useradd --system --create-home appuser
+
+# Copy only the built JAR
+COPY --from=builder /app/target/*.jar app.jar
+
+# Run as non-root user
+USER appuser
+
 EXPOSE 8080
 
-# Start the application
-ENTRYPOINT ["java","-jar","app.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar"]
