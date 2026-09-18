@@ -36,3 +36,26 @@ backend/.env
 # Maven Wrapper Logs
 # ===========================
 .mvn/wrapper/maven-wrapper.jar
+
+# ===========================
+# Terraform
+# ===========================
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+
+# ===========================
+# Local CLI binaries
+# ===========================
+kubectl
+eksctl
+*.tar.gz
+
+# ===========================
+# Frontend local environment
+# ===========================
+frontend/.env

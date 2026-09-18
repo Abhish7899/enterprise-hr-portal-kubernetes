@@ -24,7 +24,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: enterprise-hr-portal-kubernetes-backend:latest
+          image: 637423415865.dkr.ecr.us-east-2.amazonaws.com/hrportal-backend:v1
           imagePullPolicy: IfNotPresent
 
           ports:
