@@ -131,6 +131,23 @@ pipeline {
 
                     echo "=== Ingress ==="
                     kubectl get ingress -n ${K8S_NAMESPACE}
+
+                    ALB_HOST=$(kubectl get ingress hr-portal -n ${K8S_NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+                    echo "ALB: ${ALB_HOST}"
+
+                    HTTP_CODE=$(curl -s -o /tmp/health-response.txt -w "%{http_code}" --max-time 30 "http://${ALB_HOST}/api/employees")
+
+                    echo "HTTP Status: ${HTTP_CODE}"
+                    echo "Response:"
+                    cat /tmp/health-response.txt
+
+                    if [ "${HTTP_CODE}" != "200" ]; then
+                        echo "Application health check FAILED"
+                        exit 1
+                    fi
+
+                    echo "Application health check PASSED"
                 '''
             }
         }
