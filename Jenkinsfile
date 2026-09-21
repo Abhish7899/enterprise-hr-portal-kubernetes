@@ -8,7 +8,6 @@ pipeline {
     environment {
         AWS_REGION = 'us-east-2'
         AWS_ACCOUNT_ID = '637423415865'
-
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
         BACKEND_REPO = 'hrportal-backend'
@@ -21,8 +20,6 @@ pipeline {
         GITOPS_FRONTEND_MANIFEST = 'k8s/gitops/frontend.yaml'
 
         K8S_NAMESPACE = 'hr-portal'
-
-        SKIP_CI = 'false'
     }
 
     stages {
@@ -33,42 +30,10 @@ pipeline {
             }
         }
 
-        stage('Detect GitOps Loop') {
-            steps {
-                script {
-                    def commitMessage = sh(
-                        script: 'git log -1 --pretty=%B',
-                        returnStdout: true
-                    ).trim()
-
-                    echo "=== Commit Message ==="
-                    echo commitMessage
-
-                    if (commitMessage.startsWith(
-                        'Update application images to build '
-                    )) {
-
-                        env.SKIP_CI = 'true'
-
-                        echo "=========================================="
-                        echo "Jenkins-generated GitOps commit detected"
-                        echo "Skipping CI to prevent Jenkins loop"
-                        echo "=========================================="
-
-                    } else {
-
-                        echo "Application/source commit detected"
-                        echo "Running normal CI pipeline"
-
-                    }
-                }
-            }
-        }
-
         stage('Backend Test') {
             when {
-                expression {
-                    env.SKIP_CI != 'true'
+                not {
+                    changelog '.*Update application images to build .*'
                 }
             }
 
@@ -76,9 +41,7 @@ pipeline {
                 dir('backend/hrportal') {
                     sh '''
                         set -e
-
                         echo "=== Backend Tests ==="
-
                         ./mvnw test
                     '''
                 }
@@ -87,8 +50,8 @@ pipeline {
 
         stage('Frontend Build') {
             when {
-                expression {
-                    env.SKIP_CI != 'true'
+                not {
+                    changelog '.*Update application images to build .*'
                 }
             }
 
@@ -96,9 +59,7 @@ pipeline {
                 dir('frontend') {
                     sh '''
                         set -e
-
                         echo "=== Frontend Build ==="
-
                         npm ci
                         npm run build
                     '''
@@ -108,8 +69,8 @@ pipeline {
 
         stage('Docker Build') {
             when {
-                expression {
-                    env.SKIP_CI != 'true'
+                not {
+                    changelog '.*Update application images to build .*'
                 }
             }
 
@@ -117,30 +78,23 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "=== Building Backend Image ==="
-
                     docker build \
                       -t ${BACKEND_IMAGE}:${BUILD_NUMBER} \
                       ./backend/hrportal
-
-                    echo "=== Building Frontend Image ==="
 
                     docker build \
                       -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} \
                       ./frontend
 
-                    echo "=== Docker Images ==="
-
-                    docker images | grep -E \
-                      "hrportal-backend|hrportal-frontend"
+                    docker images | grep -E "hrportal-backend|hrportal-frontend"
                 '''
             }
         }
 
         stage('ECR Login') {
             when {
-                expression {
-                    env.SKIP_CI != 'true'
+                not {
+                    changelog '.*Update application images to build .*'
                 }
             }
 
@@ -148,10 +102,8 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "=== ECR Login ==="
-
                     aws ecr get-login-password \
-                      --region ${AWS_REGION} | \
+                      --region ${AWS_REGION} |
                     docker login \
                       --username AWS \
                       --password-stdin ${ECR_REGISTRY}
@@ -161,8 +113,8 @@ pipeline {
 
         stage('Push Images') {
             when {
-                expression {
-                    env.SKIP_CI != 'true'
+                not {
+                    changelog '.*Update application images to build .*'
                 }
             }
 
@@ -170,31 +122,22 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "=== Pushing Backend Image ==="
-
-                    docker push \
-                      ${BACKEND_IMAGE}:${BUILD_NUMBER}
-
-                    echo "=== Pushing Frontend Image ==="
-
-                    docker push \
-                      ${FRONTEND_IMAGE}:${BUILD_NUMBER}
+                    docker push ${BACKEND_IMAGE}:${BUILD_NUMBER}
+                    docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
                 '''
             }
         }
 
         stage('Update GitOps Manifests') {
             when {
-                expression {
-                    env.SKIP_CI != 'true'
+                not {
+                    changelog '.*Update application images to build .*'
                 }
             }
 
             steps {
                 sh '''
                     set -e
-
-                    echo "=== Updating GitOps manifests ==="
 
                     test -f ${GITOPS_BACKEND_MANIFEST}
                     test -f ${GITOPS_FRONTEND_MANIFEST}
@@ -207,19 +150,8 @@ pipeline {
                       "s#image: ${FRONTEND_IMAGE}:.*#image: ${FRONTEND_IMAGE}:${BUILD_NUMBER}#" \
                       ${GITOPS_FRONTEND_MANIFEST}
 
-                    echo "=== Updated Backend Image ==="
-
-                    grep "image:" \
-                      ${GITOPS_BACKEND_MANIFEST}
-
-                    echo "=== Updated Frontend Image ==="
-
-                    grep "image:" \
-                      ${GITOPS_FRONTEND_MANIFEST}
-
-                    echo "=== Git Status ==="
-
-                    git status --short
+                    grep "image:" ${GITOPS_BACKEND_MANIFEST}
+                    grep "image:" ${GITOPS_FRONTEND_MANIFEST}
 
                     git config user.name "Jenkins GitOps"
                     git config user.email "jenkins-gitops@users.noreply.github.com"
@@ -231,8 +163,6 @@ pipeline {
                     git commit \
                       -m "Update application images to build ${BUILD_NUMBER}"
 
-                    echo "=== Pushing GitOps Change ==="
-
                     GIT_SSH_COMMAND="ssh -i /var/lib/jenkins/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
                     git push \
                       git@github.com:Abhish7899/enterprise-hr-portal-kubernetes.git \
@@ -243,8 +173,8 @@ pipeline {
 
         stage('Application Verification') {
             when {
-                expression {
-                    env.SKIP_CI != 'true'
+                not {
+                    changelog '.*Update application images to build .*'
                 }
             }
 
@@ -252,35 +182,15 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "=== Waiting for Argo CD to reconcile ==="
-
+                    echo "Waiting for Argo CD to reconcile..."
                     sleep 30
 
-                    echo "=== Kubernetes Deployments ==="
-
-                    kubectl get deployments \
-                      -n ${K8S_NAMESPACE}
-
-                    echo "=== Kubernetes Pods ==="
-
-                    kubectl get pods \
-                      -n ${K8S_NAMESPACE}
-
-                    echo "=== Kubernetes Services ==="
-
-                    kubectl get services \
-                      -n ${K8S_NAMESPACE}
-
-                    echo "=== Ingress ==="
-
-                    kubectl get ingress \
-                      -n ${K8S_NAMESPACE}
+                    kubectl get deployments -n ${K8S_NAMESPACE}
+                    kubectl get pods -n ${K8S_NAMESPACE}
 
                     ALB_HOST=$(kubectl get ingress hr-portal \
                       -n ${K8S_NAMESPACE} \
                       -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-
-                    echo "ALB: ${ALB_HOST}"
 
                     HTTP_CODE=$(curl -sS \
                       --max-time 30 \
@@ -302,40 +212,12 @@ pipeline {
     }
 
     post {
-
         success {
-            echo "=========================================="
-            echo "GitOps CI pipeline completed successfully"
-            echo "=========================================="
-
-            script {
-                if (env.SKIP_CI == 'true') {
-
-                    echo "GitOps-only commit detected."
-                    echo "CI stages were skipped."
-                    echo "Jenkins loop prevention successful."
-
-                } else {
-
-                    echo "Backend image:"
-                    echo "${BACKEND_IMAGE}:${BUILD_NUMBER}"
-
-                    echo "Frontend image:"
-                    echo "${FRONTEND_IMAGE}:${BUILD_NUMBER}"
-
-                    echo "GitOps:"
-                    echo "GitHub → Argo CD → EKS"
-
-                }
-            }
+            echo "GitOps CI pipeline completed successfully."
         }
 
         failure {
-            echo "=========================================="
-            echo "Pipeline FAILED"
-            echo "=========================================="
-
-            echo "Check the failed stage and Jenkins console output."
+            echo "Pipeline FAILED."
         }
 
         always {
