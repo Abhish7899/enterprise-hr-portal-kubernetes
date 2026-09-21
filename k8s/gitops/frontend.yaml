@@ -24,7 +24,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: 637423415865.dkr.ecr.us-east-2.amazonaws.com/hrportal-frontend:8
+          image: 637423415865.dkr.ecr.us-east-2.amazonaws.com/hrportal-frontend:9
           imagePullPolicy: IfNotPresent
 
           ports:
