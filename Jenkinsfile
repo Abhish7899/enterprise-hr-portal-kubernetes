@@ -13,8 +13,10 @@ pipeline {
         BACKEND_IMAGE = "${ECR_REGISTRY}/${BACKEND_REPO}"
         FRONTEND_IMAGE = "${ECR_REGISTRY}/${FRONTEND_REPO}"
 
-        EKS_CLUSTER = 'hr-portal-dev-eks'
+        GITOPS_BACKEND_MANIFEST = 'k8s/gitops/backend.yaml'
+        GITOPS_FRONTEND_MANIFEST = 'k8s/gitops/frontend.yaml'
         K8S_NAMESPACE = 'hr-portal'
+
     }
 
     stages {
@@ -45,13 +47,24 @@ pipeline {
         stage('Docker Build') {
             steps {
                 sh '''
+                    set -e
+
+                    echo "=== Building Backend Image ==="
+
                     docker build \
                       -t ${BACKEND_IMAGE}:${BUILD_NUMBER} \
                       ./backend/hrportal
 
+                    echo "=== Building Frontend Image ==="
+
                     docker build \
                       -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} \
                       ./frontend
+
+                    echo "=== Docker Images ==="
+
+                    docker images | grep -E \
+                      "hrportal-backend|hrportal-frontend"
                 '''
             }
         }
@@ -59,7 +72,10 @@ pipeline {
         stage('ECR Login') {
             steps {
                 sh '''
-                    aws ecr get-login-password --region ${AWS_REGION} | \
+                    set -e
+
+                    aws ecr get-login-password \
+                      --region ${AWS_REGION} | \
                     docker login \
                       --username AWS \
                       --password-stdin ${ECR_REGISTRY}
@@ -70,49 +86,61 @@ pipeline {
         stage('Push Images') {
             steps {
                 sh '''
-                    docker push ${BACKEND_IMAGE}:${BUILD_NUMBER}
-                    docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
+                    set -e
+
+                    echo "=== Pushing Backend Image ==="
+
+                    docker push \
+                      ${BACKEND_IMAGE}:${BUILD_NUMBER}
+
+                    echo "=== Pushing Frontend Image ==="
+
+                    docker push \
+                      ${FRONTEND_IMAGE}:${BUILD_NUMBER}
                 '''
             }
         }
 
-        stage('Configure EKS') {
+        stage('Update GitOps Manifests') {
             steps {
                 sh '''
-                    aws eks update-kubeconfig \
-                      --region ${AWS_REGION} \
-                      --name ${EKS_CLUSTER}
+                    set -e
 
-                    kubectl config current-context
-                    kubectl get nodes
-                '''
-            }
-        }
+                    echo "=== Updating GitOps manifests ==="
 
-        stage('Deploy Backend') {
-            steps {
-                sh '''
-                    kubectl -n ${K8S_NAMESPACE} set image \
-                      deployment/backend \
-                      backend=${BACKEND_IMAGE}:${BUILD_NUMBER}
+                    sed -i \
+                      "s#image: ${BACKEND_IMAGE}:.*#image: ${BACKEND_IMAGE}:${BUILD_NUMBER}#" \
+                      ${GITOPS_BACKEND_MANIFEST}
 
-                    kubectl -n ${K8S_NAMESPACE} rollout status \
-                      deployment/backend \
-                      --timeout=180s
-                '''
-            }
-        }
+                    sed -i \
+                      "s#image: ${FRONTEND_IMAGE}:.*#image: ${FRONTEND_IMAGE}:${BUILD_NUMBER}#" \
+                      ${GITOPS_FRONTEND_MANIFEST}
 
-        stage('Deploy Frontend') {
-            steps {
-                sh '''
-                    kubectl -n ${K8S_NAMESPACE} set image \
-                      deployment/frontend \
-                      frontend=${FRONTEND_IMAGE}:${BUILD_NUMBER}
+                    echo "=== Updated Backend Image ==="
 
-                    kubectl -n ${K8S_NAMESPACE} rollout status \
-                      deployment/frontend \
-                      --timeout=180s
+                    grep "image:" ${GITOPS_BACKEND_MANIFEST}
+
+                    echo "=== Updated Frontend Image ==="
+
+                    grep "image:" ${GITOPS_FRONTEND_MANIFEST}
+
+                    echo "=== Git Status ==="
+
+                    git status --short
+
+                    git config user.name "Jenkins GitOps"
+                    git config user.email "jenkins-gitops@users.noreply.github.com"
+
+                    git add \
+                      ${GITOPS_BACKEND_MANIFEST} \
+                      ${GITOPS_FRONTEND_MANIFEST}
+
+                    git commit \
+                      -m "Update application images to build ${BUILD_NUMBER}"
+
+                    echo "=== Pushing GitOps Change ==="
+
+                      GIT_SSH_COMMAND="ssh -i /var/lib/jenkins/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" git push git@github.com:Abhish7899/enterprise-hr-portal-kubernetes.git HEAD:main
                 '''
             }
         }
@@ -120,23 +148,39 @@ pipeline {
         stage('Application Verification') {
             steps {
                 sh '''
-                    echo "=== Deployments ==="
+                    set -e
+
+                    echo "=== Waiting for Argo CD to reconcile ==="
+
+                    sleep 30
+
+                    echo "=== Kubernetes Deployments ==="
+
                     kubectl get deployments -n ${K8S_NAMESPACE}
 
-                    echo "=== Pods ==="
+                    echo "=== Kubernetes Pods ==="
+
                     kubectl get pods -n ${K8S_NAMESPACE}
 
-                    echo "=== Services ==="
+                    echo "=== Kubernetes Services ==="
+
                     kubectl get services -n ${K8S_NAMESPACE}
 
                     echo "=== Ingress ==="
+
                     kubectl get ingress -n ${K8S_NAMESPACE}
 
-                    ALB_HOST=$(kubectl get ingress hr-portal -n ${K8S_NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+                    ALB_HOST=$(kubectl get ingress hr-portal \
+                      -n ${K8S_NAMESPACE} \
+                      -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
                     echo "ALB: ${ALB_HOST}"
 
-                    HTTP_CODE=$(curl -sS --max-time 30 -w "%{http_code}" -o /dev/null "http://${ALB_HOST}/api/employees")
+                    HTTP_CODE=$(curl -sS \
+                      --max-time 30 \
+                      -w "%{http_code}" \
+                      -o /dev/null \
+                      "http://${ALB_HOST}/api/employees")
 
                     echo "HTTP Status: ${HTTP_CODE}"
 
@@ -152,18 +196,34 @@ pipeline {
     }
 
     post {
+
         success {
-            echo "CI/CD deployment completed successfully."
-            echo "Backend image: ${BACKEND_IMAGE}:${BUILD_NUMBER}"
-            echo "Frontend image: ${FRONTEND_IMAGE}:${BUILD_NUMBER}"
+            echo "=========================================="
+            echo "GitOps CI pipeline completed successfully"
+            echo "=========================================="
+
+            echo "Backend image:"
+            echo "${BACKEND_IMAGE}:${BUILD_NUMBER}"
+
+            echo "Frontend image:"
+            echo "${FRONTEND_IMAGE}:${BUILD_NUMBER}"
+
+            echo "GitOps:"
+            echo "GitHub → Argo CD → EKS"
         }
 
         failure {
-            echo "CI/CD pipeline failed. Check the failed stage and Jenkins console output."
+            echo "=========================================="
+            echo "Pipeline FAILED"
+            echo "=========================================="
+
+            echo "Check the failed stage and Jenkins console output."
         }
 
         always {
-            sh 'docker logout ${ECR_REGISTRY} || true'
+            sh '''
+                docker logout ${ECR_REGISTRY} || true
+            '''
         }
     }
 }
