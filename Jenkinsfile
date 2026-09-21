@@ -8,6 +8,7 @@ pipeline {
     environment {
         AWS_REGION = 'us-east-2'
         AWS_ACCOUNT_ID = '637423415865'
+
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
         BACKEND_REPO = 'hrportal-backend'
@@ -41,7 +42,11 @@ pipeline {
                 dir('backend/hrportal') {
                     sh '''
                         set -e
-                        echo "=== Backend Tests ==="
+
+                        echo "======================================"
+                        echo "        Backend Tests"
+                        echo "======================================"
+
                         ./mvnw test
                     '''
                 }
@@ -59,7 +64,11 @@ pipeline {
                 dir('frontend') {
                     sh '''
                         set -e
-                        echo "=== Frontend Build ==="
+
+                        echo "======================================"
+                        echo "        Frontend Build"
+                        echo "======================================"
+
                         npm ci
                         npm run build
                     '''
@@ -78,6 +87,10 @@ pipeline {
                 sh '''
                     set -e
 
+                    echo "======================================"
+                    echo "        Docker Build"
+                    echo "======================================"
+
                     docker build \
                       -t ${BACKEND_IMAGE}:${BUILD_NUMBER} \
                       ./backend/hrportal
@@ -86,7 +99,10 @@ pipeline {
                       -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} \
                       ./frontend
 
-                    docker images | grep -E "hrportal-backend|hrportal-frontend"
+                    echo "=== Docker Images ==="
+
+                    docker images | grep -E \
+                      "hrportal-backend|hrportal-frontend"
                 '''
             }
         }
@@ -101,6 +117,10 @@ pipeline {
             steps {
                 sh '''
                     set -e
+
+                    echo "======================================"
+                    echo "        ECR Login"
+                    echo "======================================"
 
                     aws ecr get-login-password \
                       --region ${AWS_REGION} |
@@ -122,8 +142,15 @@ pipeline {
                 sh '''
                     set -e
 
-                    docker push ${BACKEND_IMAGE}:${BUILD_NUMBER}
-                    docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
+                    echo "======================================"
+                    echo "        Push Images to ECR"
+                    echo "======================================"
+
+                    docker push \
+                      ${BACKEND_IMAGE}:${BUILD_NUMBER}
+
+                    docker push \
+                      ${FRONTEND_IMAGE}:${BUILD_NUMBER}
                 '''
             }
         }
@@ -139,6 +166,10 @@ pipeline {
                 sh '''
                     set -e
 
+                    echo "======================================"
+                    echo "        Update GitOps Manifests"
+                    echo "======================================"
+
                     test -f ${GITOPS_BACKEND_MANIFEST}
                     test -f ${GITOPS_FRONTEND_MANIFEST}
 
@@ -150,8 +181,13 @@ pipeline {
                       "s#image: ${FRONTEND_IMAGE}:.*#image: ${FRONTEND_IMAGE}:${BUILD_NUMBER}#" \
                       ${GITOPS_FRONTEND_MANIFEST}
 
+                    echo "=== Backend Image ==="
                     grep "image:" ${GITOPS_BACKEND_MANIFEST}
+
+                    echo "=== Frontend Image ==="
                     grep "image:" ${GITOPS_FRONTEND_MANIFEST}
+
+                    echo "=== Git Configuration ==="
 
                     git config user.name "Jenkins GitOps"
                     git config user.email "jenkins-gitops@users.noreply.github.com"
@@ -162,6 +198,8 @@ pipeline {
 
                     git commit \
                       -m "Update application images to build ${BUILD_NUMBER}"
+
+                    echo "=== Push GitOps Commit ==="
 
                     GIT_SSH_COMMAND="ssh -i /var/lib/jenkins/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
                     git push \
@@ -182,17 +220,53 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Waiting for Argo CD to reconcile..."
-                    sleep 30
+                    echo "======================================"
+                    echo "     Application Verification"
+                    echo "======================================"
 
-                    kubectl get deployments -n ${K8S_NAMESPACE}
-                    kubectl get pods -n ${K8S_NAMESPACE}
+                    echo "Waiting for Kubernetes deployments to become ready..."
+
+                    echo "=== Backend Rollout ==="
+
+                    kubectl rollout status \
+                      deployment/backend \
+                      -n ${K8S_NAMESPACE} \
+                      --timeout=180s
+
+                    echo "=== Frontend Rollout ==="
+
+                    kubectl rollout status \
+                      deployment/frontend \
+                      -n ${K8S_NAMESPACE} \
+                      --timeout=180s
+
+                    echo "=== Deployments ==="
+
+                    kubectl get deployments \
+                      -n ${K8S_NAMESPACE}
+
+                    echo "=== Pods ==="
+
+                    kubectl get pods \
+                      -n ${K8S_NAMESPACE}
+
+                    echo "=== Ingress ==="
 
                     ALB_HOST=$(kubectl get ingress hr-portal \
                       -n ${K8S_NAMESPACE} \
                       -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
-                    HTTP_CODE=$(curl -sS \
+                    echo "ALB Host: ${ALB_HOST}"
+
+                    if [ -z "${ALB_HOST}" ]; then
+                        echo "ERROR: ALB hostname was not found"
+                        exit 1
+                    fi
+
+                    echo "=== API Health Check ==="
+
+                    HTTP_CODE=$(curl \
+                      -sS \
                       --max-time 30 \
                       -w "%{http_code}" \
                       -o /dev/null \
@@ -201,17 +275,20 @@ pipeline {
                     echo "HTTP Status: ${HTTP_CODE}"
 
                     if [ "${HTTP_CODE}" != "200" ]; then
-                        echo "Application health check FAILED"
+                        echo "ERROR: Application health check failed"
                         exit 1
                     fi
 
-                    echo "Application health check PASSED"
+                    echo "======================================"
+                    echo " Application health check PASSED"
+                    echo "======================================"
                 '''
             }
         }
     }
 
     post {
+
         success {
             echo "GitOps CI pipeline completed successfully."
         }
